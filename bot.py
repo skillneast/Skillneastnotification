@@ -8,6 +8,7 @@ from telegram.ext import (
     Filters,
     ConversationHandler,
     CallbackContext,
+    CallbackQueryHandler,
 )
 import pymongo
 from bson.objectid import ObjectId
@@ -37,47 +38,48 @@ NAME, CATEGORY, DESCRIPTION, IMAGE_URL = range(4)
 
 # --- Helper Function for Formatting ---
 def format_and_send_post(context: CallbackContext, chat_id: int, course_doc: dict):
+    """Ek course document leta hai aur use naye fancy format me post karta hai."""
+    course_id_str = str(course_doc['_id'])
     category_name = course_doc.get('category', 'N/A')
     course_title = course_doc.get('name', 'N/A')
     description_text = course_doc.get('description', '')
     image_url = course_doc.get('image_url', '')
     fixed_website_link = "https://skillneast.github.io/Skillneast/#"
 
-    # Escape special characters for MarkdownV2
-    def escape_markdown(text):
-        escape_chars = r'_*[]()~`>#+-.=|{}!'
-        return ''.join(['\\' + char if char in escape_chars else char for char in text])
-
-    category_name_escaped = escape_markdown(category_name)
-    course_title_escaped = escape_markdown(course_title)
-    description_text_escaped = escape_markdown(description_text)
-
-
+    # Using special unicode characters for the template
     caption_text = f"""
-┏━━━━━━━━━━━━━━━━━━┓
-    🎉 *NEW BATCH ALERT* 🚀✨
-┗━━━━━━━━━━━━━━━━━━┛
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+        📌 𝗡𝗘𝗪 𝗖𝗢𝗨𝗥𝗦𝗘 𝗔𝗗𝗗𝗘𝗗 🥰✨
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
-╭─❖ *COURSE INFO* ❖─╮
- 🏷️ *CATEGORY* : {category_name_escaped}
- 📚 *NAME* : {course_title_escaped}
-╰──────────────────╯
+╭────────❖ 𝗖𝗢𝗨𝗥𝗦𝗘 𝗜𝗡𝗙𝗢 ❖────────╮
+🏷️ 𝗖𝗔𝗧𝗘𝗚𝗢𝗥𝗬 : {category_name}
+📚 𝗡𝗔𝗠𝗘       : {course_title}
+╰────────────────────────────────╯
 
-📝 *DESCRIPTION*:
-> {description_text_escaped}
+📝 𝗗𝗘𝗦𝗖𝗥𝗜𝗣𝗧𝗜𝗢𝗡:
+> {description_text}
 
-✿━━━━━━━━━━━━━━━━━━✿
-𖣐 *PROVIDED BY*: @skillneast
+✿━━━━━━━━━━━━━━━━━━━━━━━━━━━━✿
+𖣐 𝗣𝗥𝗢𝗩𝗜𝗗𝗘𝗗 𝗕𝗬: [@skillneast⚝]
 """
-    keyboard = [[InlineKeyboardButton("🖥️ Visit Now 🖥️", url=fixed_website_link)]]
+    keyboard = [
+        [InlineKeyboardButton("🖥️ Visit Website 🖥️", url=fixed_website_link)],
+        [InlineKeyboardButton("🗑️ Delete Course from DB", callback_data=f'delete_{course_id_str}')]
+    ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     try:
         context.bot.send_photo(
             chat_id=chat_id,
             photo=image_url,
-            caption=caption_text,
-            parse_mode=ParseMode.MARKDOWN_V2
+            caption=caption_text
+        )
+        # We send the buttons in a separate message because captions have a character limit
+        context.bot.send_message(
+            chat_id=chat_id,
+            text=f"Options for '{course_title}':",
+            reply_markup=reply_markup
         )
     except Exception as e:
         logger.error(f"Failed to send formatted post. Error: {e}")
@@ -89,11 +91,14 @@ def error_handler(update: object, context: CallbackContext) -> None:
 
 def start(update: Update, context: CallbackContext) -> None:
     update.message.reply_text(
-        "Namaste!\n/new_batch - Naya course save karne ke liye.\n"
-        "/alllist - Sabhi courses ki simple list dekhne ke liye.\n"
-        "/show <Course Name> - Kisi ek course ka full post dekhne ke liye."
+        "Namaste! Aapke final bot me swagat hai.\n\n"
+        "*/new_batch* - Naya course database me save karein.\n"
+        "*/alllist* - Sabhi courses ki sundar list dekhein.\n"
+        "*/show* - Sabhi courses ko ek-ek karke full format me post karein (delete button ke saath).",
+        parse_mode=ParseMode.MARKDOWN
     )
 
+# ... Conversation functions (new_batch_start, get_name, etc.) are here ...
 def new_batch_start(update: Update, context: CallbackContext) -> int:
     update.message.reply_text("Chaliye naya batch add karte hain! ✨\n\nSabse pehle, course ka Name kya hai?")
     return NAME
@@ -125,14 +130,8 @@ def add_course_and_finish(update: Update, context: CallbackContext) -> int:
     }
     
     try:
-        result = courses_collection.insert_one(course_doc)
+        courses_collection.insert_one(course_doc)
         update.message.reply_text(f"✅ Course '{user_data['name']}' database me save ho gaya hai!")
-        
-        newly_added_course = courses_collection.find_one({'_id': result.inserted_id})
-        if newly_added_course:
-            update.message.reply_text("*Yeh raha aapke naye course ka preview:*", parse_mode=ParseMode.MARKDOWN_V2)
-            format_and_send_post(context, update.effective_chat.id, newly_added_course)
-
     except Exception as e:
         logger.error(f"Failed to save course to DB: {e}")
         update.message.reply_text("Database me save karte waqt koi problem hui.")
@@ -140,7 +139,9 @@ def add_course_and_finish(update: Update, context: CallbackContext) -> int:
     user_data.clear()
     return ConversationHandler.END
 
+
 def all_list(update: Update, context: CallbackContext) -> None:
+    """Naye fancy format me list dikhata hai."""
     try:
         all_courses = list(courses_collection.find({}))
     except Exception as e:
@@ -159,51 +160,58 @@ def all_list(update: Update, context: CallbackContext) -> None:
             courses_by_category[category] = []
         courses_by_category[category].append(course)
 
-    message = "📖 *Saved Courses ki Simple List:*\n\n"
+    final_message = ""
     for category, courses in courses_by_category.items():
-        category_escaped = category.upper().replace('-', '\\-')
-        message += f"✅ *{category_escaped}*\n"
-        for course in courses:
-            course_id_str = str(course['_id'])
-            name_escaped = course['name'].replace('-', '\\-')
-            message += f"    - {name_escaped}  `/del_{course_id_str}`\n"
+        final_message += f"╔══════════════════════════════╗\n"
+        final_message += f"🏷️ 𝐂𝐀𝐓𝐄𝐆𝐎𝐑𝐘 : {category}\n"
+        final_message += f"╚══════════════════════════════╝\n"
+        final_message += "        ║\n"
+        
+        for i, course in enumerate(courses):
+            if i == len(courses) - 1: # Last item
+                final_message += f"        ╚═ ✅ {course['name']}\n\n"
+            else:
+                final_message += f"        ╟─ ✅ {course['name']}\n"
     
-    update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
+    update.message.reply_text(f"<pre>{final_message}</pre>", parse_mode=ParseMode.HTML)
 
-def show_course(update: Update, context: CallbackContext) -> None:
+
+def show_all_courses(update: Update, context: CallbackContext) -> None:
+    """Sabhi courses ko full format me post karta hai."""
     try:
-        course_name_to_show = ' '.join(context.args)
-        if not course_name_to_show:
-            update.message.reply_text("Please course ka naam dein. Example: `/show Python Masterclass`")
+        all_courses = list(courses_collection.find({}))
+        if not all_courses:
+            update.message.reply_text("Database me post karne ke liye koi course nahi hai.")
             return
 
-        course_doc = courses_collection.find_one({"name": course_name_to_show})
-        
-        if course_doc:
-            format_and_send_post(context, update.effective_chat.id, course_doc)
-        else:
-            update.message.reply_text(f"'{course_name_to_show}' naam ka koi course nahi mila.")
+        update.message.reply_text(f"Total {len(all_courses)} courses hain. Unhe ek-ek karke post kar raha hoon...")
+        for course in all_courses:
+            format_and_send_post(context, update.effective_chat.id, course)
     
     except Exception as e:
-        logger.error(f"Error showing course: {e}")
-        update.message.reply_text("Course dikhate waqt koi problem hui.")
+        logger.error(f"Error showing all courses: {e}")
+        update.message.reply_text("Courses dikhate waqt koi problem hui.")
 
-def delete_command_handler(update: Update, context: CallbackContext) -> None:
+
+def delete_button_handler(update: Update, context: CallbackContext) -> None:
+    """Handles delete button callback from /show command posts."""
+    query = update.callback_query
+    query.answer()
+    
     try:
-        command_parts = update.message.text.split('_')
-        if len(command_parts) != 2: return
-        course_id_to_delete = command_parts[1]
-        
+        course_id_to_delete = query.data.split('_')[1]
         result = courses_collection.delete_one({'_id': ObjectId(course_id_to_delete)})
         
         if result.deleted_count > 0:
-            update.message.reply_text("✅ Course successfully delete ho gaya hai.")
+            # Message delete kardo jisse button attach tha
+            query.edit_message_text("✅ Course database se delete ho gaya hai.")
         else:
-            update.message.reply_text("❌ Course nahi mila.")
-    
+            query.edit_message_text("❌ Course nahi mila. Shayad pehle hi delete ho chuka hai.")
+
     except Exception as e:
-        logger.error(f"Error deleting course: {e}")
-        update.message.reply_text("Course delete karte waqt koi problem hui.")
+        logger.error(f"Error deleting via button: {e}")
+        query.edit_message_text("Course delete karte waqt koi problem hui.")
+
 
 def cancel(update: Update, context: CallbackContext) -> int:
     update.message.reply_text('Theek hai, process cancel kar diya gaya hai.')
@@ -232,9 +240,8 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(conv_handler)
     dispatcher.add_handler(CommandHandler("alllist", all_list))
-    dispatcher.add_handler(CommandHandler("show", show_course, pass_args=True))
-    dispatcher.add_handler(MessageHandler(Filters.regex(r'^\/del_'), delete_command_handler))
-    
+    dispatcher.add_handler(CommandHandler("show", show_all_courses))
+    dispatcher.add_handler(CallbackQueryHandler(delete_button_handler, pattern='^delete_'))
     dispatcher.add_error_handler(error_handler)
 
     # Start the Bot
