@@ -43,9 +43,15 @@ def format_and_send_post(context: CallbackContext, chat_id: int, course_doc: dic
     image_url = course_doc.get('image_url', '')
     fixed_website_link = "https://skillneast.github.io/Skillneast/#"
 
-    # Using MarkdownV2 for formatting. Note that some special characters need to be escaped.
-    # We will stick to simple bold and italics for reliability.
-    description_text_escaped = description_text.replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace(']', '\\]').replace('(', '\\(').replace(')', '\\)').replace('~', '\\~').replace('`', '\\`').replace('>', '\\>').replace('#', '\\#').replace('+', '\\+').replace('-', '\\-').replace('=', '\\=').replace('|', '\\|').replace('{', '\\{').replace('}', '\\}').replace('.', '\\.').replace('!', '\\!')
+    # Escape special characters for MarkdownV2
+    def escape_markdown(text):
+        escape_chars = r'_*[]()~`>#+-.=|{}!'
+        return ''.join(['\\' + char if char in escape_chars else char for char in text])
+
+    category_name_escaped = escape_markdown(category_name)
+    course_title_escaped = escape_markdown(course_title)
+    description_text_escaped = escape_markdown(description_text)
+
 
     caption_text = f"""
 ┏━━━━━━━━━━━━━━━━━━┓
@@ -53,12 +59,12 @@ def format_and_send_post(context: CallbackContext, chat_id: int, course_doc: dic
 ┗━━━━━━━━━━━━━━━━━━┛
 
 ╭─❖ *COURSE INFO* ❖─╮
- 🏷️ *CATEGORY* : {category_name}
- 📚 *NAME* : {course_title}
+ 🏷️ *CATEGORY* : {category_name_escaped}
+ 📚 *NAME* : {course_title_escaped}
 ╰──────────────────╯
 
 📝 *DESCRIPTION*:
-> _{description_text_escaped}_
+> {description_text_escaped}
 
 ✿━━━━━━━━━━━━━━━━━━✿
 𖣐 *PROVIDED BY*: @skillneast
@@ -78,10 +84,7 @@ def format_and_send_post(context: CallbackContext, chat_id: int, course_doc: dic
         context.bot.send_message(chat_id=chat_id, text=f"Post banane me koi problem hui. Error: {e}")
 
 # --- Bot Command Functions ---
-
-# THIS IS THE MISSING FUNCTION
 def error_handler(update: object, context: CallbackContext) -> None:
-    """Log Errors caused by Updates."""
     logger.error(f"Update {update} caused error {context.error}")
 
 def start(update: Update, context: CallbackContext) -> None:
@@ -158,10 +161,12 @@ def all_list(update: Update, context: CallbackContext) -> None:
 
     message = "📖 *Saved Courses ki Simple List:*\n\n"
     for category, courses in courses_by_category.items():
-        message += f"✅ *{category.upper()}*\n"
+        category_escaped = category.upper().replace('-', '\\-')
+        message += f"✅ *{category_escaped}*\n"
         for course in courses:
             course_id_str = str(course['_id'])
-            message += f"    - {course['name']}  [/del_{course_id_str}]\n"
+            name_escaped = course['name'].replace('-', '\\-')
+            message += f"    - {name_escaped}  `/del_{course_id_str}`\n"
     
     update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
 
@@ -227,10 +232,9 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(conv_handler)
     dispatcher.add_handler(CommandHandler("alllist", all_list))
-    dispatcher.add_handler(CommandHandler("show", show_course, pass_args=True)) # pass_args=True is important
+    dispatcher.add_handler(CommandHandler("show", show_course, pass_args=True))
     dispatcher.add_handler(MessageHandler(Filters.regex(r'^\/del_'), delete_command_handler))
     
-    # Register the error handler
     dispatcher.add_error_handler(error_handler)
 
     # Start the Bot
