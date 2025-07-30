@@ -8,7 +8,6 @@ from telegram.ext import (
     Filters,
     ConversationHandler,
     CallbackContext,
-    CallbackQueryHandler,
 )
 import pymongo
 from bson.objectid import ObjectId
@@ -26,8 +25,8 @@ MONGODB_URI = os.environ.get("MONGODB_URI")
 # --- MongoDB Connection ---
 try:
     client = pymongo.MongoClient(MONGODB_URI)
-    db = client.skillneast_bot # Database ka naam
-    courses_collection = db.courses # Collection ka naam
+    db = client.skillneast_bot
+    courses_collection = db.courses
     logger.info("MongoDB connected successfully!")
 except Exception as e:
     logger.error(f"Could not connect to MongoDB: {e}")
@@ -36,14 +35,54 @@ except Exception as e:
 # Conversation states
 NAME, CATEGORY, DESCRIPTION, IMAGE_URL = range(4)
 
-# --- Bot Functions ---
-def error_handler(update: object, context: CallbackContext) -> None:
-    logger.error(f"Update {update} caused error {context.error}")
+# --- Helper Function for Formatting ---
+def format_and_send_post(context: CallbackContext, chat_id: int, course_doc: dict):
+    """Ek course document leta hai aur use fancy format me post karta hai."""
+    category_name = course_doc.get('category', 'N/A')
+    course_title = course_doc.get('name', 'N/A')
+    description_text = course_doc.get('description', '')
+    image_url = course_doc.get('image_url', '')
+    fixed_website_link = "https://skillneast.github.io/Skillneast/#"
+
+    # Fancy Unicode characters can sometimes cause issues.
+    # We will use simple text for stability, but formatted nicely.
+    caption_text = f"""
+┏━━━━━━━━━━━━━━━━━━┓
+    🎉 *NEW BATCH ALERT!* 🚀✨
+┗━━━━━━━━━━━━━━━━━━┛
+
+╭─❖ *COURSE INFO* ❖─╮
+ 🏷️ *CATEGORY* : {category_name}
+ 📚 *NAME* : {course_title}
+╰──────────────────╯
+
+📝 *DESCRIPTION*:
+> _{description_text}_
+
+✿━━━━━━━━━━━━━━━━━━✿
+𖣐 *PROVIDED BY*: @skillneast
+"""
+    keyboard = [[InlineKeyboardButton("🖥️ Visit Now 🖥️", url=fixed_website_link)]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    try:
+        context.bot.send_photo(
+            chat_id=chat_id,
+            photo=image_url,
+            caption=caption_text,
+            parse_mode=ParseMode.MARKDOWN_V2
+        )
+    except Exception as e:
+        logger.error(f"Failed to send formatted post. Error: {e}")
+        context.bot.send_message(chat_id=chat_id, text=f"Post banane me koi problem hui. Error: {e}")
+
+# --- Bot Command Functions ---
 
 def start(update: Update, context: CallbackContext) -> None:
     update.message.reply_text(
-        "Namaste! Naya course add karne ke liye /new_batch use karein.\n"
-        "Sabhi saved courses dekhne ke liye /alllist use karein."
+        "Namaste!\n/new_batch - Naya course save karne ke liye.\n"
+        "/alllist - Sabhi courses ki simple list dekhne ke liye.\n"
+        "/show <Course Name> - Kisi ek course ka full post dekhne ke liye."
     )
 
 def new_batch_start(update: Update, context: CallbackContext) -> int:
@@ -56,7 +95,7 @@ def get_name(update: Update, context: CallbackContext) -> int:
     return CATEGORY
 
 def get_category(update: Update, context: CallbackContext) -> int:
-    context.user_data['category'] = update.message.text.strip().title() # Title case me save hoga
+    context.user_data['category'] = update.message.text.strip().title()
     update.message.reply_text("Okay. Ab course ka Description likho.")
     return DESCRIPTION
 
@@ -77,8 +116,15 @@ def add_course_and_finish(update: Update, context: CallbackContext) -> int:
     }
     
     try:
-        courses_collection.insert_one(course_doc)
-        update.message.reply_text(f"✅ Course '{user_data['name']}' successfully database me save ho gaya hai!")
+        result = courses_collection.insert_one(course_doc)
+        update.message.reply_text(f"✅ Course '{user_data['name']}' database me save ho gaya hai!")
+        
+        # Saved course ka full post preview bhejo
+        newly_added_course = courses_collection.find_one({'_id': result.inserted_id})
+        if newly_added_course:
+            update.message.reply_text("*Yeh raha aapke naye course ka preview:*", parse_mode=ParseMode.MARKDOWN_V2)
+            format_and_send_post(context, update.effective_chat.id, newly_added_course)
+
     except Exception as e:
         logger.error(f"Failed to save course to DB: {e}")
         update.message.reply_text("Database me save karte waqt koi problem hui.")
@@ -87,6 +133,7 @@ def add_course_and_finish(update: Update, context: CallbackContext) -> int:
     return ConversationHandler.END
 
 def all_list(update: Update, context: CallbackContext) -> None:
+    """Simple list dikhata hai delete command ke saath."""
     try:
         all_courses = list(courses_collection.find({}))
     except Exception as e:
@@ -98,7 +145,6 @@ def all_list(update: Update, context: CallbackContext) -> None:
         update.message.reply_text("Database me abhi tak koi course nahi hai.")
         return
 
-    # Courses ko category se group karo
     courses_by_category = {}
     for course in all_courses:
         category = course.get('category', 'Uncategorized')
@@ -106,25 +152,40 @@ def all_list(update: Update, context: CallbackContext) -> None:
             courses_by_category[category] = []
         courses_by_category[category].append(course)
 
-    message = "📖 *Here is the list of all courses:*\n\n"
+    message = "📖 *Saved Courses ki Simple List:*\n\n"
     for category, courses in courses_by_category.items():
         message += f"✅ *{category.upper()}*\n"
         for course in courses:
-            # MongoDB ki unique ID ko string me convert karo
             course_id_str = str(course['_id'])
             message += f"    - {course['name']}  [/del_{course_id_str}]\n"
     
-    update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
+    update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
+
+def show_course(update: Update, context: CallbackContext) -> None:
+    """Ek specific course ka full fancy post dikhata hai."""
+    try:
+        # Command se course ka naam nikalo, e.g., /show Course Name
+        course_name_to_show = ' '.join(context.args)
+        if not course_name_to_show:
+            update.message.reply_text("Please course ka naam dein. Example: `/show Python Masterclass`")
+            return
+
+        course_doc = courses_collection.find_one({"name": course_name_to_show})
+        
+        if course_doc:
+            format_and_send_post(context, update.effective_chat.id, course_doc)
+        else:
+            update.message.reply_text(f"'{course_name_to_show}' naam ka koi course nahi mila.")
+    
+    except Exception as e:
+        logger.error(f"Error showing course: {e}")
+        update.message.reply_text("Course dikhate waqt koi problem hui.")
 
 def delete_command_handler(update: Update, context: CallbackContext) -> None:
     """Handles /del_<id> commands"""
     try:
-        # Command se ID nikalo, e.g., /del_60b8d2...
         command_parts = update.message.text.split('_')
-        if len(command_parts) != 2:
-            update.message.reply_text("Invalid delete format. Use the format from /alllist.")
-            return
-
+        if len(command_parts) != 2: return
         course_id_to_delete = command_parts[1]
         
         result = courses_collection.delete_one({'_id': ObjectId(course_id_to_delete)})
@@ -132,12 +193,11 @@ def delete_command_handler(update: Update, context: CallbackContext) -> None:
         if result.deleted_count > 0:
             update.message.reply_text("✅ Course successfully delete ho gaya hai.")
         else:
-            update.message.reply_text("❌ Course nahi mila. Shayad pehle hi delete ho chuka hai.")
+            update.message.reply_text("❌ Course nahi mila.")
     
     except Exception as e:
         logger.error(f"Error deleting course: {e}")
         update.message.reply_text("Course delete karte waqt koi problem hui.")
-
 
 def cancel(update: Update, context: CallbackContext) -> int:
     update.message.reply_text('Theek hai, process cancel kar diya gaya hai.')
@@ -146,7 +206,7 @@ def cancel(update: Update, context: CallbackContext) -> int:
 
 def main() -> None:
     if not TOKEN or not MONGODB_URI or not client:
-        logger.error("Environment variables not set or DB connection failed. Bot cannot start.")
+        logger.error("Env variables not set or DB connection failed. Bot cannot start.")
         return
 
     updater = Updater(TOKEN)
@@ -166,7 +226,7 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(conv_handler)
     dispatcher.add_handler(CommandHandler("alllist", all_list))
-    # Delete command handler: /del_... se shuru hone wale commands ko pakdega
+    dispatcher.add_handler(CommandHandler("show", show_course))
     dispatcher.add_handler(MessageHandler(Filters.regex(r'^\/del_'), delete_command_handler))
     dispatcher.add_error_handler(error_handler)
 
