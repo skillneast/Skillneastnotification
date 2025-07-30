@@ -37,18 +37,19 @@ NAME, CATEGORY, DESCRIPTION, IMAGE_URL = range(4)
 
 # --- Helper Function for Formatting ---
 def format_and_send_post(context: CallbackContext, chat_id: int, course_doc: dict):
-    """Ek course document leta hai aur use fancy format me post karta hai."""
     category_name = course_doc.get('category', 'N/A')
     course_title = course_doc.get('name', 'N/A')
     description_text = course_doc.get('description', '')
     image_url = course_doc.get('image_url', '')
     fixed_website_link = "https://skillneast.github.io/Skillneast/#"
 
-    # Fancy Unicode characters can sometimes cause issues.
-    # We will use simple text for stability, but formatted nicely.
+    # Using MarkdownV2 for formatting. Note that some special characters need to be escaped.
+    # We will stick to simple bold and italics for reliability.
+    description_text_escaped = description_text.replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace(']', '\\]').replace('(', '\\(').replace(')', '\\)').replace('~', '\\~').replace('`', '\\`').replace('>', '\\>').replace('#', '\\#').replace('+', '\\+').replace('-', '\\-').replace('=', '\\=').replace('|', '\\|').replace('{', '\\{').replace('}', '\\}').replace('.', '\\.').replace('!', '\\!')
+
     caption_text = f"""
 ┏━━━━━━━━━━━━━━━━━━┓
-    🎉 *NEW BATCH ALERT!* 🚀✨
+    🎉 *NEW BATCH ALERT* 🚀✨
 ┗━━━━━━━━━━━━━━━━━━┛
 
 ╭─❖ *COURSE INFO* ❖─╮
@@ -57,7 +58,7 @@ def format_and_send_post(context: CallbackContext, chat_id: int, course_doc: dic
 ╰──────────────────╯
 
 📝 *DESCRIPTION*:
-> _{description_text}_
+> _{description_text_escaped}_
 
 ✿━━━━━━━━━━━━━━━━━━✿
 𖣐 *PROVIDED BY*: @skillneast
@@ -77,6 +78,11 @@ def format_and_send_post(context: CallbackContext, chat_id: int, course_doc: dic
         context.bot.send_message(chat_id=chat_id, text=f"Post banane me koi problem hui. Error: {e}")
 
 # --- Bot Command Functions ---
+
+# THIS IS THE MISSING FUNCTION
+def error_handler(update: object, context: CallbackContext) -> None:
+    """Log Errors caused by Updates."""
+    logger.error(f"Update {update} caused error {context.error}")
 
 def start(update: Update, context: CallbackContext) -> None:
     update.message.reply_text(
@@ -119,7 +125,6 @@ def add_course_and_finish(update: Update, context: CallbackContext) -> int:
         result = courses_collection.insert_one(course_doc)
         update.message.reply_text(f"✅ Course '{user_data['name']}' database me save ho gaya hai!")
         
-        # Saved course ka full post preview bhejo
         newly_added_course = courses_collection.find_one({'_id': result.inserted_id})
         if newly_added_course:
             update.message.reply_text("*Yeh raha aapke naye course ka preview:*", parse_mode=ParseMode.MARKDOWN_V2)
@@ -133,7 +138,6 @@ def add_course_and_finish(update: Update, context: CallbackContext) -> int:
     return ConversationHandler.END
 
 def all_list(update: Update, context: CallbackContext) -> None:
-    """Simple list dikhata hai delete command ke saath."""
     try:
         all_courses = list(courses_collection.find({}))
     except Exception as e:
@@ -162,9 +166,7 @@ def all_list(update: Update, context: CallbackContext) -> None:
     update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
 
 def show_course(update: Update, context: CallbackContext) -> None:
-    """Ek specific course ka full fancy post dikhata hai."""
     try:
-        # Command se course ka naam nikalo, e.g., /show Course Name
         course_name_to_show = ' '.join(context.args)
         if not course_name_to_show:
             update.message.reply_text("Please course ka naam dein. Example: `/show Python Masterclass`")
@@ -182,7 +184,6 @@ def show_course(update: Update, context: CallbackContext) -> None:
         update.message.reply_text("Course dikhate waqt koi problem hui.")
 
 def delete_command_handler(update: Update, context: CallbackContext) -> None:
-    """Handles /del_<id> commands"""
     try:
         command_parts = update.message.text.split('_')
         if len(command_parts) != 2: return
@@ -226,8 +227,10 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(conv_handler)
     dispatcher.add_handler(CommandHandler("alllist", all_list))
-    dispatcher.add_handler(CommandHandler("show", show_course))
+    dispatcher.add_handler(CommandHandler("show", show_course, pass_args=True)) # pass_args=True is important
     dispatcher.add_handler(MessageHandler(Filters.regex(r'^\/del_'), delete_command_handler))
+    
+    # Register the error handler
     dispatcher.add_error_handler(error_handler)
 
     # Start the Bot
