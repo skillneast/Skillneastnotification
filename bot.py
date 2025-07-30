@@ -17,86 +17,92 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- Environment Variables ---
-# Render से Token और App Name लेने के लिए
 TOKEN = os.environ.get("TOKEN")
 APP_NAME = os.environ.get("APP_NAME")
 PORT = int(os.environ.get("PORT", "8443"))
 
-# Conversation states
-NAME, CATEGORY, DESCRIPTION, IMAGE_URL, WEBSITE_LINK = range(5)
+# Conversation states (Website link state hata diya gaya hai)
+NAME, CATEGORY, DESCRIPTION, IMAGE_URL = range(4)
 
-# /start command
+# Error handling function
+def error_handler(update: object, context: CallbackContext) -> None:
+    """Log Errors caused by Updates."""
+    logger.error(f"Update {update} caused error {context.error}")
+
+# /start command (Hinglish me)
 def start(update: Update, context: CallbackContext) -> None:
     update.message.reply_text(
-        "नमस्ते! मैं आपके कोर्स पोस्ट बनाने में मदद करूँगा।\n"
-        "नया कोर्स जोड़ने के लिए /new_batch कमांड का उपयोग करें।"
+        "Namaste! Main aapke course post banane mein help karunga.\n"
+        "Naya course add karne ke liye /new_batch command use karein."
     )
 
-# Command to start the conversation
+# Conversation shuru karne ka command
 def new_batch_start(update: Update, context: CallbackContext) -> int:
-    update.message.reply_text("चलिए नया बैच जोड़ते हैं! ✨\n\nसबसे पहले, कोर्स का नाम क्या है?")
+    update.message.reply_text("Chaliye naya batch add karte hain! ✨\n\nSabse pehle, course ka Name kya hai?")
     return NAME
 
-# Function to get course name
+# Name lene ka function
 def get_name(update: Update, context: CallbackContext) -> int:
     context.user_data['name'] = update.message.text
-    update.message.reply_text("बहुत बढ़िया! अब कोर्स की कैटेगरी बताएं।")
+    update.message.reply_text("Great! Ab course ki Category batao.")
     return CATEGORY
 
-# Function to get category
+# Category lene ka function
 def get_category(update: Update, context: CallbackContext) -> int:
     context.user_data['category'] = update.message.text
-    update.message.reply_text("ठीक है। अब कोर्स का विवरण (Description) लिखें।")
+    update.message.reply_text("Okay. Ab course ka Description likho.")
     return DESCRIPTION
 
-# Function to get description
+# Description lene ka function
 def get_description(update: Update, context: CallbackContext) -> int:
     context.user_data['description'] = update.message.text
-    update.message.reply_text("विवरण सेव कर लिया गया है। अब कोर्स के पोस्टर का इमेज URL भेजें।")
+    update.message.reply_text("Description save ho gaya hai. Ab course ke poster ka Image URL bhejo.")
     return IMAGE_URL
 
-# Function to get image URL
-def get_image_url(update: Update, context: CallbackContext) -> int:
-    context.user_data['image_url'] = update.message.text
-    update.message.reply_text("इमेज URL मिल गया। आखिर में, 'Visit Now' बटन के लिए अपनी वेबसाइट का लिंक भेजें।")
-    return WEBSITE_LINK
-
-# Function to create and send final post
-def get_website_link_and_post(update: Update, context: CallbackContext) -> int:
+# Image URL lene aur final post banane ka function
+def get_image_url_and_post(update: Update, context: CallbackContext) -> int:
     user_data = context.user_data
+    user_data['image_url'] = update.message.text
+    
+    # Website link ab fix hai
+    fixed_website_link = "https://skillneast.github.io/Skillneast/#"
+    
+    # Naya message format
     description_quoted = f"> {user_data['description']}"
-
     caption_text = (
-        f"*{'New Batch Added 🥰 ✨'}*\n\n"
-        f"*Category:* {user_data['category']}\n"
-        f"*Course Name:* {user_data['name']}\n\n"
-        f"*Description:*\n{description_quoted}\n\n"
+        f"📌 *New Batch Added* 🥰✨\n\n"
+        f"*{'Category'}:* {user_data['category']}\n"
+        f"*{'Name'}:* {user_data['name']}\n\n"
+        f"*{'Description'}:*\n{description_quoted}\n\n"
         f"Provided by :- @skillneast"
     )
 
     keyboard = [
-        [InlineKeyboardButton("🖥️ Visit Now 🖥️", url=user_data['website_link'])],
+        [InlineKeyboardButton("🖥️ Visit Now 🖥️", url=fixed_website_link)],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    update.message.reply_photo(
-        photo=user_data['image_url'],
-        caption=caption_text,
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=reply_markup,
-    )
-    
+    try:
+        update.message.reply_photo(
+            photo=user_data['image_url'],
+            caption=caption_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup,
+        )
+    except Exception as e:
+        logger.error(f"Failed to send photo. Error: {e}")
+        update.message.reply_text(f"Photo bhejne me koi problem hui. Please check karein ki Image URL sahi hai. Error: {e}")
+
     user_data.clear()
     return ConversationHandler.END
 
-# Function to cancel the conversation
+# Cancel command
 def cancel(update: Update, context: CallbackContext) -> int:
-    update.message.reply_text('ठीक है, इस प्रक्रिया को रद्द कर दिया गया है।')
+    update.message.reply_text('Theek hai, process cancel kar diya gaya hai.')
     context.user_data.clear()
     return ConversationHandler.END
 
 def main() -> None:
-    # Get the token from environment variables
     if not TOKEN:
         logger.error("No TOKEN found. Please set it in environment variables.")
         return
@@ -110,16 +116,15 @@ def main() -> None:
             NAME: [MessageHandler(Filters.text & ~Filters.command, get_name)],
             CATEGORY: [MessageHandler(Filters.text & ~Filters.command, get_category)],
             DESCRIPTION: [MessageHandler(Filters.text & ~Filters.command, get_description)],
-            IMAGE_URL: [MessageHandler(Filters.text & ~Filters.command, get_image_url)],
-            WEBSITE_LINK: [MessageHandler(Filters.text & ~Filters.command, get_website_link_and_post)],
+            IMAGE_URL: [MessageHandler(Filters.text & ~Filters.command, get_image_url_and_post)],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
     )
 
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(conv_handler)
+    dispatcher.add_error_handler(error_handler)
 
-    # Start the Bot with Webhook for deployment
     logger.info("Starting bot on webhook...")
     updater.start_webhook(listen="0.0.0.0",
                           port=PORT,
