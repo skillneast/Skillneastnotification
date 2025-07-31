@@ -9,6 +9,7 @@ from telegram.ext import (
     ConversationHandler,
     CallbackContext,
 )
+from telegram.error import BadRequest
 import pymongo
 from bson.objectid import ObjectId
 
@@ -27,10 +28,10 @@ client = None
 courses_collection = None
 try:
     client = pymongo.MongoClient(MONGODB_URI)
+    # Test the connection to raise an error early if it fails
+    client.server_info()
     db = client.skillneast_bot
     courses_collection = db.courses
-    # Test the connection
-    client.server_info()
     logger.info("MongoDB connected successfully!")
 except Exception as e:
     logger.error(f"Could not connect to MongoDB: {e}")
@@ -44,7 +45,9 @@ def escape_markdown(text: str) -> str:
     """Helper function to escape telegram markdown V2 characters."""
     if not isinstance(text, str):
         return ''
+    # List of characters to escape
     escape_chars = r'_*[]()~`>#+-.=|{}!'
+    # Use a direct replacement approach
     return ''.join(['\\' + char if char in escape_chars else char for char in text])
 
 def to_sans_serif_bold(text: str) -> str:
@@ -59,7 +62,7 @@ def to_sans_serif_bold(text: str) -> str:
     return "".join(mapping.get(c, c) for c in text)
 
 def format_and_send_post(context: CallbackContext, chat_id: int, course_doc: dict):
-    """Ek course document leta hai aur use naye saaf format me post karta hai."""
+    """Formats and sends the course post with improved error handling."""
     category_name = course_doc.get('category', 'N/A')
     course_title = course_doc.get('name', 'N/A')
     description_text = course_doc.get('description', '')
@@ -68,20 +71,24 @@ def format_and_send_post(context: CallbackContext, chat_id: int, course_doc: dic
 
     separator_line = r"\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-"
 
+    # FIX: Handle multi-line descriptions correctly for quote blocks
+    escaped_desc = escape_markdown(description_text)
+    quoted_description = "> " + escaped_desc.replace('\n', '\n> ')
+
     caption_text = (
         f"🎉 *NEW COURSE ADDED* 🎉\n"
         f"{separator_line}\n\n"
         f"🏷️ *Category:* {escape_markdown(category_name)}\n"
         f"📚 *Name:* {escape_markdown(course_title)}\n\n"
         f"📝 *Description:*\n"
-        f"> {escape_markdown(description_text)}\n\n"
+        f"{quoted_description}\n\n"
         f"{separator_line}\n"
         f"𖣐 *Provided By:* @skillneast"
     )
 
     keyboard = [[InlineKeyboardButton("🖥️ Visit Website 🖥️", url=fixed_website_link)]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
+
     try:
         context.bot.send_photo(
             chat_id=chat_id,
@@ -90,9 +97,22 @@ def format_and_send_post(context: CallbackContext, chat_id: int, course_doc: dic
             parse_mode=ParseMode.MARKDOWN_V2,
             reply_markup=reply_markup
         )
+    except BadRequest as e:
+        # FIX: Handle specific errors like invalid image URLs
+        if "Wrong remote file identifier specified" in e.message:
+            logger.error(f"Failed to send photo due to invalid URL: {image_url}. Error: {e}")
+            context.bot.send_message(
+                chat_id=chat_id,
+                text=f"❌ Post bhejte waqt error aaya.\n*Kaaran*: Diya gaya Image URL (`{image_url}`) galat ya invalid hai.\nKripya ek a_chha, direct image link istemal karein.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+        else:
+            logger.error(f"Failed to send formatted post. BadRequest: {e}")
+            context.bot.send_message(chat_id=chat_id, text=f"Post banane me koi problem hui. Error: {e}")
     except Exception as e:
-        logger.error(f"Failed to send formatted post. Error: {e}")
-        context.bot.send_message(chat_id=chat_id, text=f"Post banane me koi problem hui. Error: {e}")
+        logger.error(f"An unexpected error occurred in format_and_send_post: {e}")
+        context.bot.send_message(chat_id=chat_id, text=f"Post bhejte waqt ek anjaan problem hui. Error: {e}")
+
 
 # --- Bot Command Functions ---
 def error_handler(update: object, context: CallbackContext) -> None:
@@ -123,40 +143,57 @@ def get_name(update: Update, context: CallbackContext) -> int:
 
 def get_category(update: Update, context: CallbackContext) -> int:
     context.user_data['category'] = update.message.text.strip().title()
-    update.message.reply_text("Okay. Ab course ka Description likho.")
+    update.message.reply_text("Okay. Ab course ka Description likho (aap multiple lines istemal kar sakte hain).")
     return DESCRIPTION
 
 def get_description(update: Update, context: CallbackContext) -> int:
     context.user_data['description'] = update.message.text
-    update.message.reply_text("Description save ho gaya hai. Ab course ke poster ka Image URL bhejo.")
+    update.message.reply_text("Description save ho gaya hai. Ab course ke poster ka direct Image URL bhejo.")
     return IMAGE_URL
 
 def add_course_and_finish(update: Update, context: CallbackContext) -> int:
     user_data = context.user_data
     user_data['image_url'] = update.message.text
-    
+
     course_doc = {
         "category": user_data['category'],
         "name": user_data['name'],
         "description": user_data['description'],
         "image_url": user_data['image_url']
     }
-    
+
+    # FIX: Separate DB and Telegram operations for better error handling
     try:
         result = courses_collection.insert_one(course_doc)
-        update.message.reply_text(f"✅ Course '{escape_markdown(user_data['name'])}' database me save ho gaya hai!", parse_mode=ParseMode.MARKDOWN_V2)
-        
-        newly_added_course = courses_collection.find_one({'_id': result.inserted_id})
-        if newly_added_course:
-            update.message.reply_text("*Yeh raha aapke naye course ka final post:*", parse_mode=ParseMode.MARKDOWN_V2)
-            format_and_send_post(context, update.effective_chat.id, newly_added_course)
-
+        inserted_id = result.inserted_id
     except Exception as e:
-        logger.error(f"Failed to save course to DB: {e}")
-        update.message.reply_text("Database me save karte waqt koi problem hui.")
+        logger.error(f"DB Error: Failed to save course '{user_data['name']}'. Error: {e}")
+        update.message.reply_text("❌ Database me save karte waqt koi problem hui. Kripya dobara try karein.")
+        user_data.clear()
+        return ConversationHandler.END
+
+    try:
+        update.message.reply_text(
+            f"✅ Course '{escape_markdown(user_data['name'])}' database me save ho gaya hai!",
+            parse_mode=ParseMode.MARKDOWN_V2
+        )
+        newly_added_course = courses_collection.find_one({'_id': inserted_id})
+        if newly_added_course:
+            update.message.reply_text(
+                "*Yeh raha aapke naye course ka final post:*",
+                parse_mode=ParseMode.MARKDOWN_V2
+            )
+            format_and_send_post(context, update.effective_chat.id, newly_added_course)
+    except Exception as e:
+        logger.error(f"Telegram API Error after saving to DB. Course ID: {inserted_id}. Error: {e}")
+        update.message.reply_text(
+            f"✅ Course database me save ho gaya hai, lekin post bhejte waqt error aa gaya.\n"
+            f"Kripya /show command se check karein. Error: {e}",
+        )
 
     user_data.clear()
     return ConversationHandler.END
+
 
 # --- List, Show, and Delete Functions ---
 def all_list(update: Update, context: CallbackContext) -> None:
@@ -175,6 +212,7 @@ def all_list(update: Update, context: CallbackContext) -> None:
         update.message.reply_text("Database me abhi tak koi course nahi hai.")
         return
 
+    # FIX: Implement the new requested format
     courses_by_category = {}
     for course in all_courses:
         category = course.get('category', 'Uncategorized')
@@ -182,27 +220,18 @@ def all_list(update: Update, context: CallbackContext) -> None:
             courses_by_category[category] = []
         courses_by_category[category].append(course.get('name', 'N/A'))
 
-    message_parts = []
-    # Categories ko a-z sort karte hain taaki output hamesha ek jaisa ho
-    for category, course_names in sorted(courses_by_category.items()):
-        formatted_category_name = to_sans_serif_bold(category.upper())
-        
-        category_header = (
-            f"╔════════════════════════════╗\n"
-            f"🏷️ 𝐂𝐀𝐓𝐄𝐆𝐎𝐑𝐘 : {formatted_category_name}\n"
-            f"╚════════════════════════════╝"
-        )
-        message_parts.append(category_header)
+    header = to_sans_serif_bold("ALL COURSES UPDATED") + " ✅"
+    message_parts = [header]
 
-        # Har category ke courses ko bhi a-z sort kar dete hain
-        course_lines = [f"✅ {name}" for name in sorted(course_names)]
-        message_parts.append("\n".join(course_lines))
+    for category, course_names in sorted(courses_by_category.items()):
+        category_line = f"🏷️ CATEGORY: {category}"
+        # Indent course lines with two spaces
+        course_lines_str = "\n".join([f"  ✅ {name}" for name in sorted(course_names)])
+        message_parts.append(f"{category_line}\n{course_lines_str}")
 
     final_message = "\n\n".join(message_parts)
-    final_message += "\n\n📌 Provided by @skillneast"
-    
-    # NOTE: Agar courses bahut zyada ho gaye to ye message 4096 characters se lamba ho sakta hai
-    # aur Telegram error dega. Future me iske liye pagination add kar sakte hain.
+    final_message += "\n\n📌 Provided by: @skillneast"
+
     update.message.reply_text(final_message)
 
 
@@ -212,7 +241,7 @@ def delete_menu(update: Update, context: CallbackContext) -> None:
         return
         
     try:
-        all_courses = list(courses_collection.find({}))
+        all_courses = list(courses_collection.find({}, {"name": 1}))
     except Exception as e:
         update.message.reply_text("Database se list laate waqt koi problem hui.")
         return
@@ -224,7 +253,6 @@ def delete_menu(update: Update, context: CallbackContext) -> None:
     message = "🗑️ *Select a course to delete by clicking the command:*\n\n"
     for course in all_courses:
         course_id_str = str(course['_id'])
-        # Bad names ko escape karna zaroori hai
         course_name_escaped = escape_markdown(course['name'])
         message += f"*{course_name_escaped}*:\n`/del_{course_id_str}`\n\n"
     
@@ -255,10 +283,7 @@ def delete_command_handler(update: Update, context: CallbackContext) -> None:
         return
         
     try:
-        command_parts = update.message.text.split('_')
-        if len(command_parts) != 2: return
-        course_id_to_delete = command_parts[1]
-        
+        course_id_to_delete = update.message.text.split('_')[1]
         result = courses_collection.delete_one({'_id': ObjectId(course_id_to_delete)})
         
         if result.deleted_count > 0:
@@ -266,7 +291,7 @@ def delete_command_handler(update: Update, context: CallbackContext) -> None:
         else:
             update.message.reply_text("❌ Course nahi mila. Shayad pehle hi delete ho chuka hai.")
     
-    except Exception as e:
+    except (IndexError, Exception) as e:
         logger.error(f"Error deleting course: {e}")
         update.message.reply_text("Course delete karte waqt koi problem hui.")
 
@@ -292,7 +317,7 @@ def main() -> None:
             NAME: [MessageHandler(Filters.text & ~Filters.command, get_name)],
             CATEGORY: [MessageHandler(Filters.text & ~Filters.command, get_category)],
             DESCRIPTION: [MessageHandler(Filters.text & ~Filters.command, get_description)],
-            IMAGE_URL: [MessageHandler(Filters.text & ~Filters.command, add_course_and_finish)],
+            IMAGE_URL: [MessageHandler(Filters.text & Filters.entity('url'), add_course_and_finish)],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
     )
@@ -306,8 +331,14 @@ def main() -> None:
     dispatcher.add_error_handler(error_handler)
 
     # Start the Bot
-    logger.info("Starting bot on webhook...")
-    updater.start_webhook(listen="0.0.0.0", port=PORT, url_path=TOKEN, webhook_url=f"https://{APP_NAME}/{TOKEN}")
+    logger.info("Starting bot...")
+    if APP_NAME: # Deploy on webhook
+        logger.info(f"Starting bot on webhook for {APP_NAME}...")
+        updater.start_webhook(listen="0.0.0.0", port=PORT, url_path=TOKEN, webhook_url=f"https://{APP_NAME}/{TOKEN}")
+    else: # Run locally
+        logger.info("Starting bot locally using polling...")
+        updater.start_polling()
+        
     updater.idle()
 
 if __name__ == '__main__':
