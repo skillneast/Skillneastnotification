@@ -23,23 +23,40 @@ PORT = int(os.environ.get("PORT", "8443"))
 MONGODB_URI = os.environ.get("MONGODB_URI")
 
 # --- MongoDB Connection ---
+client = None
+courses_collection = None
 try:
     client = pymongo.MongoClient(MONGODB_URI)
     db = client.skillneast_bot
     courses_collection = db.courses
+    # Test the connection
+    client.server_info()
     logger.info("MongoDB connected successfully!")
 except Exception as e:
     logger.error(f"Could not connect to MongoDB: {e}")
-    client = None
+    client = None # Ensure client is None if connection fails
 
 # Conversation states
 NAME, CATEGORY, DESCRIPTION, IMAGE_URL = range(4)
 
 # --- Helper Functions ---
-def escape_markdown(text):
-    """Helper function to escape telegram markdown V2 characters"""
+def escape_markdown(text: str) -> str:
+    """Helper function to escape telegram markdown V2 characters."""
+    if not isinstance(text, str):
+        return ''
     escape_chars = r'_*[]()~`>#+-.=|{}!'
     return ''.join(['\\' + char if char in escape_chars else char for char in text])
+
+def to_sans_serif_bold(text: str) -> str:
+    """Converts ASCII text to Mathematical Sans-Serif Bold Unicode characters."""
+    if not isinstance(text, str):
+        return ''
+    mapping = {
+        'A': '𝗔', 'B': '𝗕', 'C': '𝗖', 'D': '𝗗', 'E': '𝗘', 'F': '𝗙', 'G': '𝗚', 'H': '𝗛', 'I': '𝗜', 'J': '𝗝', 'K': '𝗞', 'L': '𝗟', 'M': '𝗠', 'N': '𝗡', 'O': '𝗢', 'P': '𝗣', 'Q': '𝗤', 'R': '𝗥', 'S': '𝗦', 'T': '𝗧', 'U': '𝗨', 'V': '𝗩', 'W': '𝗪', 'X': '𝗫', 'Y': '𝗬', 'Z': '𝗭',
+        'a': '𝗮', 'b': '𝗯', 'c': '𝗰', 'd': '𝗱', 'e': '𝗲', 'f': '𝗳', 'g': '𝗴', 'h': '𝗵', 'i': '𝗶', 'j': '𝗷', 'k': '𝗸', 'l': '𝗹', 'm': '𝗺', 'n': '𝗻', 'o': '𝗼', 'p': '𝗽', 'q': '𝗾', 'r': '𝗿', 's': '𝘀', 't': '𝘁', 'u': '𝘂', 'v': '𝘃', 'w': '𝘄', 'x': '𝘅', 'y': '𝘆', 'z': '𝘇',
+        '0': '𝟬', '1': '𝟭', '2': '𝟮', '3': '𝟯', '4': '𝟰', '5': '𝟱', '6': '𝟲', '7': '𝟳', '8': '𝟴', '9': '𝟵'
+    }
+    return "".join(mapping.get(c, c) for c in text)
 
 def format_and_send_post(context: CallbackContext, chat_id: int, course_doc: dict):
     """Ek course document leta hai aur use naye saaf format me post karta hai."""
@@ -49,7 +66,6 @@ def format_and_send_post(context: CallbackContext, chat_id: int, course_doc: dic
     image_url = course_doc.get('image_url', '')
     fixed_website_link = "https://skillneast.github.io/Skillneast/#"
 
-    # THE FIX IS HERE: The separator line hyphens are now escaped with '\'
     separator_line = r"\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-"
 
     caption_text = (
@@ -94,6 +110,9 @@ def start(update: Update, context: CallbackContext) -> None:
 
 # --- Conversation to Add New Course ---
 def new_batch_start(update: Update, context: CallbackContext) -> int:
+    if not client:
+        update.message.reply_text("❌ Database connection available nahi hai. Admin se sampark karein.")
+        return ConversationHandler.END
     update.message.reply_text("Chaliye naya batch add karte hain! ✨\n\nSabse pehle, course ka Name kya hai?")
     return NAME
 
@@ -141,9 +160,14 @@ def add_course_and_finish(update: Update, context: CallbackContext) -> int:
 
 # --- List, Show, and Delete Functions ---
 def all_list(update: Update, context: CallbackContext) -> None:
+    if not client:
+        update.message.reply_text("❌ Database connection available nahi hai. Admin se sampark karein.")
+        return
+
     try:
         all_courses = list(courses_collection.find({}))
     except Exception as e:
+        logger.error(f"Error fetching courses for /alllist: {e}")
         update.message.reply_text("Database se list laate waqt koi problem hui.")
         return
 
@@ -156,19 +180,37 @@ def all_list(update: Update, context: CallbackContext) -> None:
         category = course.get('category', 'Uncategorized')
         if category not in courses_by_category:
             courses_by_category[category] = []
-        courses_by_category[category].append(course)
+        courses_by_category[category].append(course.get('name', 'N/A'))
 
-    message = "📚 *Here is a clean list of all courses:*\n\n"
-    for category, courses in courses_by_category.items():
-        message += f"✅ *{escape_markdown(category)}*\n"
-        for course in courses:
-            # Note: The hyphen for the list item is a special case and doesn't need escaping here
-            message += f"  - {escape_markdown(course['name'])}\n"
-        message += "\n"
+    message_parts = []
+    # Categories ko a-z sort karte hain taaki output hamesha ek jaisa ho
+    for category, course_names in sorted(courses_by_category.items()):
+        formatted_category_name = to_sans_serif_bold(category.upper())
+        
+        category_header = (
+            f"╔════════════════════════════╗\n"
+            f"🏷️ 𝐂𝐀𝐓𝐄𝐆𝐎𝐑𝐘 : {formatted_category_name}\n"
+            f"╚════════════════════════════╝"
+        )
+        message_parts.append(category_header)
+
+        # Har category ke courses ko bhi a-z sort kar dete hain
+        course_lines = [f"✅ {name}" for name in sorted(course_names)]
+        message_parts.append("\n".join(course_lines))
+
+    final_message = "\n\n".join(message_parts)
+    final_message += "\n\n📌 Provided by @skillneast"
     
-    update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
+    # NOTE: Agar courses bahut zyada ho gaye to ye message 4096 characters se lamba ho sakta hai
+    # aur Telegram error dega. Future me iske liye pagination add kar sakte hain.
+    update.message.reply_text(final_message)
+
 
 def delete_menu(update: Update, context: CallbackContext) -> None:
+    if not client:
+        update.message.reply_text("❌ Database connection available nahi hai. Admin se sampark karein.")
+        return
+        
     try:
         all_courses = list(courses_collection.find({}))
     except Exception as e:
@@ -182,11 +224,17 @@ def delete_menu(update: Update, context: CallbackContext) -> None:
     message = "🗑️ *Select a course to delete by clicking the command:*\n\n"
     for course in all_courses:
         course_id_str = str(course['_id'])
-        message += f"*{escape_markdown(course['name'])}*:\n`/del_{course_id_str}`\n\n"
+        # Bad names ko escape karna zaroori hai
+        course_name_escaped = escape_markdown(course['name'])
+        message += f"*{course_name_escaped}*:\n`/del_{course_id_str}`\n\n"
     
     update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
 
 def show_all_courses(update: Update, context: CallbackContext) -> None:
+    if not client:
+        update.message.reply_text("❌ Database connection available nahi hai. Admin se sampark karein.")
+        return
+
     try:
         all_courses = list(courses_collection.find({}))
         if not all_courses:
@@ -202,6 +250,10 @@ def show_all_courses(update: Update, context: CallbackContext) -> None:
         update.message.reply_text("Courses dikhate waqt koi problem hui.")
 
 def delete_command_handler(update: Update, context: CallbackContext) -> None:
+    if not client:
+        update.message.reply_text("❌ Database connection available nahi hai. Admin se sampark karein.")
+        return
+        
     try:
         command_parts = update.message.text.split('_')
         if len(command_parts) != 2: return
@@ -224,8 +276,11 @@ def cancel(update: Update, context: CallbackContext) -> int:
     return ConversationHandler.END
 
 def main() -> None:
-    if not TOKEN or not MONGODB_URI or not client:
-        logger.error("Env variables not set or DB connection failed. Bot cannot start.")
+    if not TOKEN or not MONGODB_URI:
+        logger.error("TOKEN or MONGODB_URI environment variable not set. Bot cannot start.")
+        return
+    if not client:
+        logger.error("MongoDB connection failed. Please check your MONGODB_URI and firewall settings. Bot cannot start.")
         return
 
     updater = Updater(TOKEN)
