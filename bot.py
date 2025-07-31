@@ -37,7 +37,7 @@ NAME, CATEGORY, DESCRIPTION, IMAGE_URL = range(4)
 
 # --- Helper Functions ---
 def escape_markdown(text):
-    """Helper function to escape telegram markdown characters"""
+    """Helper function to escape telegram markdown V2 characters"""
     escape_chars = r'_*[]()~`>#+-.=|{}!'
     return ''.join(['\\' + char if char in escape_chars else char for char in text])
 
@@ -49,15 +49,17 @@ def format_and_send_post(context: CallbackContext, chat_id: int, course_doc: dic
     image_url = course_doc.get('image_url', '')
     fixed_website_link = "https://skillneast.github.io/Skillneast/#"
 
-    # New, clean and stable format
+    # THE FIX IS HERE: The separator line hyphens are now escaped with '\'
+    separator_line = r"\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-"
+
     caption_text = (
         f"🎉 *NEW COURSE ADDED* 🎉\n"
-        f"------------------------------------\n\n"
+        f"{separator_line}\n\n"
         f"🏷️ *Category:* {escape_markdown(category_name)}\n"
         f"📚 *Name:* {escape_markdown(course_title)}\n\n"
         f"📝 *Description:*\n"
         f"> {escape_markdown(description_text)}\n\n"
-        f"------------------------------------\n"
+        f"{separator_line}\n"
         f"𖣐 *Provided By:* @skillneast"
     )
 
@@ -139,7 +141,6 @@ def add_course_and_finish(update: Update, context: CallbackContext) -> int:
 
 # --- List, Show, and Delete Functions ---
 def all_list(update: Update, context: CallbackContext) -> None:
-    """Clean list dikhata hai (bina delete command ke)."""
     try:
         all_courses = list(courses_collection.find({}))
     except Exception as e:
@@ -161,14 +162,13 @@ def all_list(update: Update, context: CallbackContext) -> None:
     for category, courses in courses_by_category.items():
         message += f"✅ *{escape_markdown(category)}*\n"
         for course in courses:
+            # Note: The hyphen for the list item is a special case and doesn't need escaping here
             message += f"  - {escape_markdown(course['name'])}\n"
         message += "\n"
     
     update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
 
-
 def delete_menu(update: Update, context: CallbackContext) -> None:
-    """Delete karne ke liye list dikhata hai."""
     try:
         all_courses = list(courses_collection.find({}))
     except Exception as e:
@@ -186,9 +186,7 @@ def delete_menu(update: Update, context: CallbackContext) -> None:
     
     update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
 
-
 def show_all_courses(update: Update, context: CallbackContext) -> None:
-    """Sabhi courses ko full format me post karta hai."""
     try:
         all_courses = list(courses_collection.find({}))
         if not all_courses:
@@ -204,7 +202,6 @@ def show_all_courses(update: Update, context: CallbackContext) -> None:
         update.message.reply_text("Courses dikhate waqt koi problem hui.")
 
 def delete_command_handler(update: Update, context: CallbackContext) -> None:
-    """Handles /del_<id> commands"""
     try:
         command_parts = update.message.text.split('_')
         if len(command_parts) != 2: return
