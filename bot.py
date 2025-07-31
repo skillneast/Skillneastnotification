@@ -35,42 +35,41 @@ except Exception as e:
 # Conversation states
 NAME, CATEGORY, DESCRIPTION, IMAGE_URL = range(4)
 
-# --- Helper Function for Formatting ---
+# --- Helper Functions ---
+def escape_markdown(text):
+    """Helper function to escape telegram markdown characters"""
+    escape_chars = r'_*[]()~`>#+-.=|{}!'
+    return ''.join(['\\' + char if char in escape_chars else char for char in text])
+
 def format_and_send_post(context: CallbackContext, chat_id: int, course_doc: dict):
-    """Ek course document leta hai aur use naye fancy format me post karta hai."""
+    """Ek course document leta hai aur use naye saaf format me post karta hai."""
     category_name = course_doc.get('category', 'N/A')
     course_title = course_doc.get('name', 'N/A')
     description_text = course_doc.get('description', '')
     image_url = course_doc.get('image_url', '')
     fixed_website_link = "https://skillneast.github.io/Skillneast/#"
 
-    # Using special unicode characters for the template
-    caption_text = f"""
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-        📌 𝗡𝗘𝗪 𝗖𝗢𝗨𝗥𝗦𝗘 𝗔𝗗𝗗𝗘𝗗 🥰✨
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+    # New, clean and stable format
+    caption_text = (
+        f"🎉 *NEW COURSE ADDED* 🎉\n"
+        f"------------------------------------\n\n"
+        f"🏷️ *Category:* {escape_markdown(category_name)}\n"
+        f"📚 *Name:* {escape_markdown(course_title)}\n\n"
+        f"📝 *Description:*\n"
+        f"> {escape_markdown(description_text)}\n\n"
+        f"------------------------------------\n"
+        f"𖣐 *Provided By:* @skillneast"
+    )
 
-╭────────❖ 𝗖𝗢𝗨𝗥𝗦𝗘 𝗜𝗡𝗙𝗢 ❖────────╮
-🏷️ 𝗖𝗔𝗧𝗘𝗚𝗢𝗥𝗬 : {category_name}
-📚 𝗡𝗔𝗠𝗘       : {course_title}
-╰────────────────────────────────╯
-
-📝 𝗗𝗘𝗦𝗖𝗥𝗜𝗣𝗧𝗜𝗢𝗡:
-┃ {description_text}
-
-✿━━━━━━━━━━━━━━━━━━━━━━━━━━━━✿
-𖣐 𝗣𝗥𝗢𝗩𝗜𝗗𝗘𝗗 𝗕𝗬: [@skillneast⚝]
-"""
     keyboard = [[InlineKeyboardButton("🖥️ Visit Website 🖥️", url=fixed_website_link)]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     try:
-        # Wrap caption in <pre> tag for perfect alignment
         context.bot.send_photo(
             chat_id=chat_id,
             photo=image_url,
-            caption=f"<pre>{caption_text}</pre>",
-            parse_mode=ParseMode.HTML,
+            caption=caption_text,
+            parse_mode=ParseMode.MARKDOWN_V2,
             reply_markup=reply_markup
         )
     except Exception as e:
@@ -85,8 +84,9 @@ def start(update: Update, context: CallbackContext) -> None:
     update.message.reply_text(
         "Namaste! Aapke final bot me swagat hai.\n\n"
         "*/new_batch* - Naya course database me save karein.\n"
-        "*/alllist* - Sabhi courses ki sundar list aur delete command dekhein.\n"
-        "*/show* - Sabhi courses ko ek-ek karke full format me post karein.",
+        "*/alllist* - Sabhi courses ki clean list dekhein.\n"
+        "*/del* - Courses ko delete karne ke liye menu dekhein.\n"
+        "*/show* - Sabhi courses ke full posts ek saath dekhein.",
         parse_mode=ParseMode.MARKDOWN
     )
 
@@ -123,12 +123,11 @@ def add_course_and_finish(update: Update, context: CallbackContext) -> int:
     
     try:
         result = courses_collection.insert_one(course_doc)
-        update.message.reply_text(f"✅ Course '{user_data['name']}' database me save ho gaya hai!")
+        update.message.reply_text(f"✅ Course '{escape_markdown(user_data['name'])}' database me save ho gaya hai!", parse_mode=ParseMode.MARKDOWN_V2)
         
-        # Saved course ka full post preview turant bhejo
         newly_added_course = courses_collection.find_one({'_id': result.inserted_id})
         if newly_added_course:
-            update.message.reply_text("Yeh raha aapke naye course ka final post:")
+            update.message.reply_text("*Yeh raha aapke naye course ka final post:*", parse_mode=ParseMode.MARKDOWN_V2)
             format_and_send_post(context, update.effective_chat.id, newly_added_course)
 
     except Exception as e:
@@ -138,13 +137,12 @@ def add_course_and_finish(update: Update, context: CallbackContext) -> int:
     user_data.clear()
     return ConversationHandler.END
 
-# --- List and Delete Functions ---
+# --- List, Show, and Delete Functions ---
 def all_list(update: Update, context: CallbackContext) -> None:
-    """Naye fancy format me list dikhata hai delete command ke saath."""
+    """Clean list dikhata hai (bina delete command ke)."""
     try:
         all_courses = list(courses_collection.find({}))
     except Exception as e:
-        logger.error(f"Failed to fetch courses from DB: {e}")
         update.message.reply_text("Database se list laate waqt koi problem hui.")
         return
 
@@ -159,22 +157,34 @@ def all_list(update: Update, context: CallbackContext) -> None:
             courses_by_category[category] = []
         courses_by_category[category].append(course)
 
-    final_message = ""
+    message = "📚 *Here is a clean list of all courses:*\n\n"
     for category, courses in courses_by_category.items():
-        final_message += f"╔══════════════════════════════╗\n"
-        final_message += f"🏷️ 𝐂𝐀𝐓𝐄𝐆𝐎𝐑𝐘 : {category}\n"
-        final_message += f"╚══════════════════════════════╝\n"
-        final_message += "        ║\n"
-        
-        for i, course in enumerate(courses):
-            course_id_str = str(course['_id'])
-            delete_command = f"/del_{course_id_str}"
-            if i == len(courses) - 1: # Last item
-                final_message += f"        ╚═ ✅ {course['name']}\n           └─ Delete: {delete_command}\n\n"
-            else:
-                final_message += f"        ╟─ ✅ {course['name']}\n           └─ Delete: {delete_command}\n"
+        message += f"✅ *{escape_markdown(category)}*\n"
+        for course in courses:
+            message += f"  - {escape_markdown(course['name'])}\n"
+        message += "\n"
     
-    update.message.reply_text(f"<pre>{final_message}</pre>", parse_mode=ParseMode.HTML)
+    update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
+
+
+def delete_menu(update: Update, context: CallbackContext) -> None:
+    """Delete karne ke liye list dikhata hai."""
+    try:
+        all_courses = list(courses_collection.find({}))
+    except Exception as e:
+        update.message.reply_text("Database se list laate waqt koi problem hui.")
+        return
+
+    if not all_courses:
+        update.message.reply_text("Delete karne ke liye koi course nahi hai.")
+        return
+
+    message = "🗑️ *Select a course to delete by clicking the command:*\n\n"
+    for course in all_courses:
+        course_id_str = str(course['_id'])
+        message += f"*{escape_markdown(course['name'])}*:\n`/del_{course_id_str}`\n\n"
+    
+    update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
 
 
 def show_all_courses(update: Update, context: CallbackContext) -> None:
@@ -238,6 +248,7 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(conv_handler)
     dispatcher.add_handler(CommandHandler("alllist", all_list))
+    dispatcher.add_handler(CommandHandler("del", delete_menu))
     dispatcher.add_handler(CommandHandler("show", show_all_courses))
     dispatcher.add_handler(MessageHandler(Filters.regex(r'^\/del_'), delete_command_handler))
     dispatcher.add_error_handler(error_handler)
