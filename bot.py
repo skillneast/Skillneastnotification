@@ -56,12 +56,11 @@ def format_and_send_post(context: CallbackContext, chat_id: int, course_doc: dic
 ╰────────────────────────────────╯
 
 📝 𝗗𝗘𝗦𝗖𝗥𝗜𝗣𝗧𝗜𝗢𝗡:
-> {description_text}
+┃ {description_text}
 
 ✿━━━━━━━━━━━━━━━━━━━━━━━━━━━━✿
 𖣐 𝗣𝗥𝗢𝗩𝗜𝗗𝗘𝗗 𝗕𝗬: [@skillneast⚝]
 """
-    # /show command ke liye sirf Visit button
     keyboard = [[InlineKeyboardButton("🖥️ Visit Website 🖥️", url=fixed_website_link)]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -169,14 +168,14 @@ def all_list(update: Update, context: CallbackContext) -> None:
         
         for i, course in enumerate(courses):
             course_id_str = str(course['_id'])
-            # Delete command ko clickable banaya
             delete_command = f"/del_{course_id_str}"
             if i == len(courses) - 1: # Last item
-                final_message += f"        ╚═ ✅ {course['name']}  ({delete_command})\n\n"
+                final_message += f"        ╚═ ✅ {course['name']}\n           └─ Delete: {delete_command}\n\n"
             else:
-                final_message += f"        ╟─ ✅ {course['name']}  ({delete_command})\n"
+                final_message += f"        ╟─ ✅ {course['name']}\n           └─ Delete: {delete_command}\n"
     
     update.message.reply_text(f"<pre>{final_message}</pre>", parse_mode=ParseMode.HTML)
+
 
 def show_all_courses(update: Update, context: CallbackContext) -> None:
     """Sabhi courses ko full format me post karta hai."""
