@@ -16,7 +16,7 @@ from telegram.error import BadRequest
 # === CONFIGURATION (Yahan apni details daalein) ===
 
 # 1. Yahan BotFather se mila hua apna bot ka token daalein
-BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN_HERE"  
+BOT_TOKEN = "8326586625:AAGA9NX8XB7ZnXqvM2-ANOO9TYfLsZeAgvQ"  
 
 # 2. Aapke channels ke username (@ ke saath) aur unke poore link
 CHANNELS = [
