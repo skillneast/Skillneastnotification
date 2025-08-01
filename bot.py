@@ -1,4 +1,4 @@
-import hmac, hashlib, random, string, logging, os
+import hmac, hashlib, random, string, logging
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -8,12 +8,12 @@ from telegram.ext import (
     ContextTypes,
 )
 
-# === CONFIG (SECRETS ARE LOADED FROM ENVIRONMENT VARIABLES) ===
-# Apne secrets ko yahan se HATA diya gaya hai. Yeh ab Render ke Environment se aayenge.
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-SECRET_KEY = os.getenv("SECRET_KEY")
+# === CONFIG (SECRETS ARE HARDCODED - NOT SAFE!) ===
+# DANGER: Yeh secrets public ho sakte hain agar code GitHub par hai.
+BOT_TOKEN = "8326586625:AAGA9NX8XB7ZnXqvM2-ANOO9TYfLsZeAgvQ"
+SECRET_KEY = "STUDYERA2025"
 
-# Yeh cheezein public hain, inko yahan rehne de sakte hain
+# Public config
 CHANNELS = [
     ("@skillneastreal", "https://t.me/skillneastreal"),
     ("@skillneast", "https://t.me/skillneast")
@@ -22,7 +22,6 @@ OWNER_LINK = "https://t.me/neasthub"
 SITE_LINK = "https://skillneastauth.vercel.app/"
 
 # === LOGGING ===
-# Logging ko setup kiya gaya hai taaki Render par errors dikh sakein
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
@@ -30,21 +29,15 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # === TOKEN GENERATOR ===
 def generate_token():
-    """Har din ek naya, secure token banata hai."""
     now = datetime.now()
-    # Example: MON-27MAY
     base = now.strftime('%a').upper()[:3] + "-" + now.strftime('%d') + now.strftime('%b').upper()
-    
-    # Secret Key ka istemaal karke ek secure hash banata hai
     digest = hmac.new(SECRET_KEY.encode(), base.encode(), hashlib.sha256).hexdigest().upper()
-    
     prefix = digest[:8]
     suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
     return f"{prefix}/{suffix}"
 
 # === START HANDLER ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles the /start command."""
     user_id = update.effective_user.id
     logging.info(f"User {user_id} started the bot.")
     
@@ -70,7 +63,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === VERIFY BUTTON HANDLER ===
 async def check_channels(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles the 'I Joined' button click."""
     query = update.callback_query
     user_id = query.from_user.id
     await query.answer()
@@ -97,7 +89,6 @@ async def check_channels(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === CHECK MEMBERSHIP ===
 async def check_all_channels(context, user_id):
-    """Checks if the user is a member of all required channels."""
     not_joined = []
     for username, url in CHANNELS:
         try:
@@ -106,13 +97,11 @@ async def check_all_channels(context, user_id):
                 not_joined.append((username, url))
         except Exception as e:
             logging.warning(f"Error checking {username} for user {user_id}: {e}")
-            # Agar bot channel me admin nahi hai, to error aayega. Isliye user ko not_joined maana jaayega.
             not_joined.append((username, url))
     return len(not_joined) == 0, not_joined
 
 # === SEND TOKEN ===
 async def send_token(obj, context, edit=False):
-    """Generates and sends the access token."""
     token = generate_token()
     keyboard = [
         [InlineKeyboardButton("🔐 Access Website", url=SITE_LINK)],
@@ -137,29 +126,16 @@ async def send_token(obj, context, edit=False):
 
 # === ERROR HANDLER ===
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    """Log Errors caused by Updates."""
     logging.error(f"Update {update} caused error {context.error}")
 
 # === RUN THE BOT ===
 def main():
-    """Start the bot."""
-    if not BOT_TOKEN:
-        logging.critical("CRITICAL: BOT_TOKEN environment variable not found!")
-        return
-    if not SECRET_KEY:
-        logging.critical("CRITICAL: SECRET_KEY environment variable not found!")
-        return
-
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     
-    # Add handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(check_channels, pattern="^check$"))
-    
-    # Add error handler
     app.add_error_handler(error_handler)
     
-    # Start the Bot
     logging.info("Starting bot...")
     app.run_polling()
 
